@@ -12,8 +12,6 @@ pub struct PlaylistArgs {
     playlist_id: i32,
 }
 
-const SAMPLING_RATE: usize = 44100;
-
 #[derive(Debug)]
 pub struct TrackModel {
     pub position: i32,
@@ -86,7 +84,7 @@ pub fn list_playlist_tracks(conn: &Connection, args: &PlaylistArgs) -> Result<()
             track
                 .cues
                 .iter()
-                .map(|(n, pos)| format!("{}: {:.2}s", n + 1, pos / SAMPLING_RATE as f32))
+                .map(|(n, pos)| format!("{}: {}", n + 1, pos))
                 .collect::<Vec<_>>()
                 .join(" "),
         ]);

@@ -1,5 +1,6 @@
 use self::{
     converter::{convert_track_locations, ConvertArgs},
+    cross_fade::{cross_fade, CrossFadeArgs},
     playlist::{list_playlist_tracks, PlaylistArgs},
     tag::list_mp3_tag,
 };
@@ -9,6 +10,7 @@ use rusqlite::Connection;
 use std::path::PathBuf;
 
 pub mod converter;
+pub mod cross_fade;
 pub mod playlist;
 pub mod tag;
 
@@ -16,6 +18,7 @@ pub mod tag;
 enum MixxxCli {
     Playlist(PlaylistArgs),
     Convert(ConvertArgs),
+    CrossFade(CrossFadeArgs),
     Tag,
 }
 
@@ -29,6 +32,7 @@ pub fn handle_commands() -> Result<()> {
     match args {
         MixxxCli::Playlist(args) => list_playlist_tracks(&conn, &args),
         MixxxCli::Convert(args) => convert_track_locations(&conn, &args),
+        MixxxCli::CrossFade(args) => cross_fade(&conn, &args),
         MixxxCli::Tag => list_mp3_tag(&conn),
     }
 }

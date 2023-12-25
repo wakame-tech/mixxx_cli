@@ -12,8 +12,12 @@ pub struct Library {
     tracknumber: Option<String>,
     location: f32,
     comment: Option<String>,
-    duration: f32,
+    /// seconds
+    pub duration: f32,
     bitrate: f32,
+    pub samplerate: usize,
+    // dB = 20 * log10 replaygain
+    pub replaygain: f32,
     pub bpm: f32,
     key: Option<String>,
     rating: i32,
