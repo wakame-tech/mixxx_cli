@@ -2,6 +2,7 @@ use crate::mixxx::{cue::Cue, library::Library, repo::AsRepo, track_location::Tra
 use anyhow::Result;
 use rusqlite::Connection;
 use std::{
+    fmt::Display,
     path::{Path, PathBuf},
     process::Command,
     time::Duration,
@@ -18,125 +19,141 @@ pub struct CrossFadeArgs {
     #[arg(long)]
     track_b_hotcue: i32,
     #[arg(long)]
+    margin_beats: u32,
+    #[arg(long)]
+    cross_fade_beats: u32,
+    #[arg(long)]
     out: PathBuf,
 }
 
+#[derive(Debug)]
+struct TrackClip {
+    path: PathBuf,
+    bpm: f32,
+    duration: Duration,
+    beat: Duration,
+    cue_at: Duration,
+}
+
+impl TrackClip {
+    pub fn new(path: &Path, library: &Library, cue: &Cue) -> Self {
+        let cue_at = Duration::from_secs_f32(cue.position / library.samplerate as f32 / 2.0);
+        let beat = Duration::from_secs_f32(60.0 / library.bpm as f32);
+        Self {
+            path: path.to_path_buf(),
+            bpm: library.bpm,
+            duration: Duration::from_secs_f32(library.duration),
+            beat,
+            cue_at,
+        }
+    }
+
+    pub fn at(&self, scale: f32, offset: i32) -> f32 {
+        let cue_at = self.cue_at.as_secs_f32() / scale;
+        let beat = self.beat.as_secs_f32() / scale;
+        cue_at + beat * offset as f32
+    }
+}
+
+impl Display for TrackClip {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "bpm={:.0} cue={:3.2}s path={}, dur={}s",
+            self.bpm,
+            self.cue_at.as_secs(),
+            self.path.display(),
+            self.duration.as_secs_f32(),
+        )
+    }
+}
+
 fn cross_fade_cmd(
-    a_path: &Path,
-    a_begin: Duration,
-    a_end: Duration,
-    b_path: &Path,
-    b_begin: Duration,
-    b_end: Duration,
-    cross: Duration,
+    a: &TrackClip,
+    b: &TrackClip,
+    a_range: (i32, i32),
+    b_range: (i32, i32),
+    cross_fade_beats: u32,
     out: &Path,
 ) -> Result<()> {
     // <https://stackoverflow.com/questions/47437050/crossfading-between-two-audio-files-with-ffmpeg>
     // ffmpeg -i a.mp3 -i b.mp3 -filter_complex "[0]atrim=0:185.0[a]; [1]atrim=80.0[b]; [a][b]acrossfade=d=5.0" out.mp3
-    let filter_complex = format!(
-        r#"
-        [0]loudnorm[0l];
-        [1]loudnorm[1l];
-        [0l]atrim={:.2}:{:.2}[a];
-        [1l]atrim={:.2}:{:.2}[b]; 
-        [a][b]acrossfade=d={:.2}"#,
-        a_begin.as_secs_f32(),
-        a_end.as_secs_f32(),
-        b_begin.as_secs_f32(),
-        b_end.as_secs_f32(),
-        cross.as_secs_f32()
+    let a_scale = b.bpm / a.bpm;
+    let b_scale = 1.0;
+    let beat = b.beat.as_secs_f32() / b_scale;
+    let (a_from, a_to) = (a.at(a_scale, a_range.0), a.at(a_scale, a_range.1));
+    let (b_from, b_to) = (b.at(b_scale, b_range.0), b.at(b_scale, b_range.1));
+    println!(
+        "A: {} .. {} .. {}",
+        a_from,
+        a.cue_at.as_secs_f32() / a_scale,
+        a_to
     );
+    println!(
+        "B: {} .. {} .. {}",
+        b_from,
+        b_from + beat * cross_fade_beats as f32,
+        b_to
+    );
+    let filters = vec![
+        format!("[0]atempo={}[0_1]", a_scale),
+        format!("[0_1]atrim={}:{}[0_2]", a_from, a_to),
+        format!("[1]atrim={}:{}[1_1]", b_from, b_to),
+        // TODO: crossfade curve
+        format!("[0_2][1_1]acrossfade=d={}", beat * cross_fade_beats as f32),
+    ];
+    let filter_complex = filters.join(";");
     println!("{}", filter_complex);
     let output = Command::new("ffmpeg")
         .args([
+            "-y".to_string(),
             "-i".to_string(),
-            a_path.display().to_string(),
+            a.path.display().to_string(),
             "-i".to_string(),
-            b_path.display().to_string(),
+            b.path.display().to_string(),
             "-filter_complex".to_string(),
             filter_complex,
             out.display().to_string(),
         ])
         .output()?;
-    println!("{}", output.status);
-    // println!("{}", String::from_utf8_lossy(&output.stdout));
-    // println!("{}", String::from_utf8_lossy(&output.stderr));
+    if !output.status.success() {
+        println!("{}", String::from_utf8_lossy(&output.stderr));
+    }
     Ok(())
 }
 
-pub fn cross_fade<'a>(conn: &'a Connection, args: &CrossFadeArgs) -> Result<()> {
+fn get_track_clip<'a>(conn: &'a Connection, track_id: i32, hotcue: i32) -> Result<TrackClip> {
     let lib_repo = Library::repo(conn);
     let track_location_repo = TrackLocation::repo(conn);
     let cue_repo = Cue::repo(conn);
 
-    let library_a = lib_repo
-        .select(args.track_a_id)?
+    let library = lib_repo
+        .select(track_id)?
         .ok_or(anyhow::anyhow!("track not found"))?;
-    let track_location_a = track_location_repo
-        .select(library_a.id)?
-        .ok_or(anyhow::anyhow!("track not found"))?
+    let track_location = track_location_repo
+        .select(track_id)?
+        .ok_or(anyhow::anyhow!("track location not found"))?
         .location;
-
-    let cue_a = dbg!(cue_repo.hot_cues_by_track_id(args.track_a_id)?)
+    let cue = cue_repo
+        .hot_cues_by_track_id(track_id)?
         .into_iter()
-        .find(|cue| cue.hotcue == args.track_a_hotcue)
+        .find(|cue| cue.hotcue == hotcue)
         .ok_or(anyhow::anyhow!("hotcue not found"))?;
-    let cue_a_at = Duration::from_secs_f32(cue_a.position / library_a.samplerate as f32 / 2.0);
+    Ok(TrackClip::new(&track_location, &library, &cue))
+}
 
-    let library_b = lib_repo
-        .select(args.track_b_id)?
-        .ok_or(anyhow::anyhow!("track not found"))?;
-    let track_location_b = track_location_repo
-        .select(library_b.id)?
-        .ok_or(anyhow::anyhow!("track not found"))?
-        .location;
-    let cue_b = dbg!(cue_repo.hot_cues_by_track_id(args.track_b_id)?)
-        .into_iter()
-        .find(|cue| cue.hotcue == args.track_b_hotcue)
-        .ok_or(anyhow::anyhow!("hotcue not found"))?;
-    let cue_b_at = Duration::from_secs_f32(cue_b.position / library_b.samplerate as f32 / 2.0);
-
-    // 16 beats
-    let beat = Duration::from_secs_f32(60.0 / library_a.bpm as f32);
-    println!("{}s/beat", beat.as_secs_f32());
-    println!(
-        "A: {}(d={}s) BPM={}\ncue-16={} cue={}",
-        track_location_a.display(),
-        library_a.duration,
-        library_a.bpm,
-        (cue_a_at - beat * 16).as_secs_f32(),
-        cue_a_at.as_secs_f32()
-    );
-    println!(
-        "B: {}(d={}s) BPM={}\ncue={} cue+16={}",
-        track_location_b.display(),
-        library_b.duration,
-        library_b.bpm,
-        cue_b_at.as_secs_f32(),
-        (cue_b_at + beat * 16).as_secs_f32()
-    );
-    // |-- A(16) --|a@-- A(16) --|
-    //             |b@-- B(16) --|-- B(16) --|
-    // cross_fade_cmd(
-    //     &track_location_a,
-    //     cue_a_at - dur_16beats,
-    //     cue_a_at + dur_16beats,
-    //     &track_location_b,
-    //     cue_b_at,
-    //     cue_b_at + dur_16beats + dur_16beats,
-    //     dur_16beats,
-    //     &args.out,
-    // )?;
-    // |-- A(16) --|a@
-    //             |b@-- B(16) --|
+pub fn cross_fade<'a>(conn: &'a Connection, args: &CrossFadeArgs) -> Result<()> {
+    let clip_a = get_track_clip(conn, args.track_a_id, args.track_a_hotcue)?;
+    let clip_b = get_track_clip(conn, args.track_b_id, args.track_b_hotcue)?;
+    println!("A:{}\nB:{}", clip_a, clip_b);
+    let a_range = (-(args.margin_beats as i32), args.cross_fade_beats as i32);
+    let b_range = (0, args.cross_fade_beats as i32 + args.margin_beats as i32);
     cross_fade_cmd(
-        &track_location_a,
-        cue_a_at - beat * 16,
-        cue_a_at + beat,
-        &track_location_b,
-        cue_b_at,
-        cue_b_at + beat * 16,
-        beat,
+        &clip_a,
+        &clip_b,
+        a_range,
+        b_range,
+        args.cross_fade_beats,
         &args.out,
     )?;
     Ok(())

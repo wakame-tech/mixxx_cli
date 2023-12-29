@@ -4,7 +4,7 @@ use crate::mixxx::{
 use anyhow::Result;
 use comfy_table::Table;
 use rusqlite::Connection;
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, time::Duration};
 
 #[derive(Debug, clap::Parser)]
 pub struct PlaylistArgs {
@@ -18,7 +18,7 @@ pub struct TrackModel {
     pub title: String,
     pub artist: Option<String>,
     pub bpm: u8,
-    pub cues: BTreeMap<u8, f32>,
+    pub cues: BTreeMap<u8, Duration>,
 }
 
 #[derive(Debug)]
@@ -37,7 +37,12 @@ fn fetch_track(conn: &Connection, playlist_track: &PlaylistTrack) -> Result<Trac
     let cues = cue_repo
         .hot_cues_by_track_id(playlist_track.track_id)?
         .iter()
-        .map(|cue| (cue.hotcue as u8, cue.position))
+        .map(|cue| {
+            (
+                cue.hotcue as u8,
+                Duration::from_secs_f32(cue.position.max(0.) / library.samplerate as f32 / 2.0),
+            )
+        })
         .collect::<BTreeMap<_, _>>();
     Ok(TrackModel {
         position: playlist_track.position,
@@ -84,7 +89,7 @@ pub fn list_playlist_tracks(conn: &Connection, args: &PlaylistArgs) -> Result<()
             track
                 .cues
                 .iter()
-                .map(|(n, pos)| format!("{}: {}", n + 1, pos))
+                .map(|(n, dur)| format!("{}: {:.1}s", n + 1, dur.as_secs_f32()))
                 .collect::<Vec<_>>()
                 .join(" "),
         ]);
