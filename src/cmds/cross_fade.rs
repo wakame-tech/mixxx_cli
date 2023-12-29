@@ -22,6 +22,8 @@ pub struct CrossFadeArgs {
     #[arg(long)]
     cross_fade_beats: u32,
     #[arg(long)]
+    bpm: Option<f32>,
+    #[arg(long)]
     out: PathBuf,
 }
 
@@ -76,12 +78,13 @@ fn cross_fade_cmd(
     a_range: (i32, i32),
     b_range: (i32, i32),
     cross_fade_beats: u32,
+    bpm: f32,
     out: &Path,
 ) -> Result<()> {
     // <https://stackoverflow.com/questions/47437050/crossfading-between-two-audio-files-with-ffmpeg>
     // ffmpeg -i a.mp3 -i b.mp3 -filter_complex "[0]atrim=0:185.0[a]; [1]atrim=80.0[b]; [a][b]acrossfade=d=5.0" out.mp3
-    let a_scale = b.bpm / a.bpm;
-    let b_scale = 1.0;
+    let a_scale = bpm / a.bpm;
+    let b_scale = bpm / b.bpm;
     let (mut a_from, a_to) = (a.at(a_scale, a_range.0), a.at(a_scale, a_range.1));
     let (mut b_from, b_to) = (b.at(b_scale, b_range.0), b.at(b_scale, b_range.1));
     let beat = b.beat / b_scale;
@@ -97,14 +100,16 @@ fn cross_fade_cmd(
         b_from = 0.0;
     }
 
+    // let curve = "cbr";
+    let curve = "tri";
     let filters = vec![
         format!("[0]atempo={}[0_1]", a_scale),
         format!("[0_1]atrim={}:{}[0_2]", a_from, a_to),
         format!("[0_2]loudnorm[0_3]"),
-        format!("[1]atrim={}:{}[1_1]", b_from, b_to),
-        format!("[1_1]loudnorm[1_2]"),
-        // TODO: crossfade curve
-        format!("[0_3][1_2]acrossfade=d={}:c1=squ:c2=squ", cross),
+        format!("[1]atempo={}[1_1]", b_scale),
+        format!("[1_1]atrim={}:{}[1_2]", b_from, b_to),
+        format!("[1_2]loudnorm[1_3]"),
+        format!("[0_3][1_3]acrossfade=d={}:c1={}:c2={}", cross, curve, curve),
     ];
     let filter_complex = filters.join(";");
     println!("{}", filter_complex);
@@ -159,6 +164,7 @@ pub fn cross_fade<'a>(conn: &'a Connection, args: &CrossFadeArgs) -> Result<()> 
         a_range,
         b_range,
         args.cross_fade_beats,
+        args.bpm.unwrap_or(clip_b.bpm),
         &args.out,
     )?;
     Ok(())
