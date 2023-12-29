@@ -27,6 +27,20 @@ pub struct CrossFadeArgs {
     out: PathBuf,
 }
 
+#[derive(Debug, clap::Parser)]
+pub struct SliceArgs {
+    #[arg(long)]
+    track_id: i32,
+    #[arg(long)]
+    from_hotcue: i32,
+    #[arg(long)]
+    to_hotcue: i32,
+    #[arg(long)]
+    bpm: Option<f32>,
+    #[arg(long)]
+    out: PathBuf,
+}
+
 #[derive(Debug)]
 struct TrackClip {
     id: i32,
@@ -35,11 +49,13 @@ struct TrackClip {
     duration: f32,
     beat: f32,
     cue_at: f32,
+    end_cue_at: Option<f32>,
 }
 
 impl TrackClip {
-    pub fn new(path: &Path, library: &Library, cue: &Cue) -> Self {
+    pub fn new(path: &Path, library: &Library, cue: &Cue, end_cue_at: Option<&Cue>) -> Self {
         let cue_at = cue.position / library.samplerate as f32 / 2.0;
+        let end_cue_at = end_cue_at.map(|cue| cue.position / library.samplerate as f32 / 2.0);
         let beat = 60.0 / library.bpm as f32;
         Self {
             id: library.id,
@@ -48,6 +64,7 @@ impl TrackClip {
             duration: library.duration,
             beat,
             cue_at,
+            end_cue_at,
         }
     }
 
@@ -55,6 +72,14 @@ impl TrackClip {
         let cue_at = self.cue_at / scale;
         let beat = self.beat / scale;
         cue_at + beat * offset as f32
+    }
+
+    pub fn end_at(&self, scale: f32) -> Option<f32> {
+        let Some(cue_at) = self.end_cue_at else {
+            return None;
+        };
+        let cue_at = cue_at / scale;
+        Some(cue_at)
     }
 }
 
@@ -70,6 +95,33 @@ impl Display for TrackClip {
             self.duration,
         )
     }
+}
+
+fn slice_cmd(a: &TrackClip, bpm: f32, out: &Path) -> Result<()> {
+    let a_scale = bpm / a.bpm;
+    let (a_from, a_to) = (a.at(a_scale, 0), a.end_at(a_scale).unwrap());
+    let filters = vec![
+        format!("[0]atempo={}[0_1]", a_scale),
+        format!("[0_1]atrim={}:{}[0_2]", a_from, a_to),
+        format!("[0_2]loudnorm"),
+    ];
+    let filter_complex = filters.join(";");
+    println!("{}", filter_complex);
+    let output = Command::new("ffmpeg")
+        .args([
+            "-y".to_string(),
+            "-i".to_string(),
+            a.path.display().to_string(),
+            "-filter_complex".to_string(),
+            filter_complex,
+            out.display().to_string(),
+        ])
+        .output()?;
+    if !output.status.success() {
+        println!("{}", String::from_utf8_lossy(&output.stderr));
+    }
+    println!("O: {}\n", out.display());
+    Ok(())
 }
 
 fn cross_fade_cmd(
@@ -132,7 +184,12 @@ fn cross_fade_cmd(
     Ok(())
 }
 
-fn get_track_clip<'a>(conn: &'a Connection, track_id: i32, hotcue: i32) -> Result<TrackClip> {
+fn get_track_clip<'a>(
+    conn: &'a Connection,
+    track_id: i32,
+    hotcue: i32,
+    end_hot_cue: Option<i32>,
+) -> Result<TrackClip> {
     let lib_repo = Library::repo(conn);
     let track_location_repo = TrackLocation::repo(conn);
     let cue_repo = Cue::repo(conn);
@@ -144,17 +201,21 @@ fn get_track_clip<'a>(conn: &'a Connection, track_id: i32, hotcue: i32) -> Resul
         .select(track_id)?
         .ok_or(anyhow::anyhow!("track location not found"))?
         .location;
-    let cue = cue_repo
+    let cues = cue_repo
         .hot_cues_by_track_id(track_id)?
         .into_iter()
+        .collect::<Vec<_>>();
+    let cue = cues
+        .iter()
         .find(|cue| cue.hotcue == hotcue)
         .ok_or(anyhow::anyhow!("hotcue not found"))?;
-    Ok(TrackClip::new(&track_location, &library, &cue))
+    let end_cue = end_hot_cue.and_then(|end_cue| cues.iter().find(|cue| cue.hotcue == end_cue));
+    Ok(TrackClip::new(&track_location, &library, &cue, end_cue))
 }
 
 pub fn cross_fade<'a>(conn: &'a Connection, args: &CrossFadeArgs) -> Result<()> {
-    let clip_a = get_track_clip(conn, args.track_a_id, args.track_a_hotcue)?;
-    let clip_b = get_track_clip(conn, args.track_b_id, args.track_b_hotcue)?;
+    let clip_a = get_track_clip(conn, args.track_a_id, args.track_a_hotcue, None)?;
+    let clip_b = get_track_clip(conn, args.track_b_id, args.track_b_hotcue, None)?;
     println!("A:{}\nB:{}", clip_a, clip_b);
     let a_range = (-(args.margin_beats as i32), args.cross_fade_beats as i32);
     let b_range = (0, args.cross_fade_beats as i32 + args.margin_beats as i32);
@@ -167,5 +228,11 @@ pub fn cross_fade<'a>(conn: &'a Connection, args: &CrossFadeArgs) -> Result<()> 
         args.bpm.unwrap_or(clip_b.bpm),
         &args.out,
     )?;
+    Ok(())
+}
+
+pub fn slice<'a>(conn: &'a Connection, args: &SliceArgs) -> Result<()> {
+    let clip_a = get_track_clip(conn, args.track_id, args.from_hotcue, Some(args.to_hotcue))?;
+    slice_cmd(&clip_a, args.bpm.unwrap_or(clip_a.bpm), &args.out)?;
     Ok(())
 }

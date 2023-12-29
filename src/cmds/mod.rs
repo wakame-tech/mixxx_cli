@@ -1,6 +1,6 @@
 use self::{
     converter::{convert_track_locations, ConvertArgs},
-    cross_fade::{cross_fade, CrossFadeArgs},
+    cross_fade::{cross_fade, slice, CrossFadeArgs, SliceArgs},
     playlist::{list_playlist_tracks, PlaylistArgs},
     tag::list_mp3_tag,
 };
@@ -19,6 +19,7 @@ enum MixxxCli {
     Playlist(PlaylistArgs),
     Convert(ConvertArgs),
     CrossFade(CrossFadeArgs),
+    Slice(SliceArgs),
     Tag,
 }
 
@@ -33,6 +34,7 @@ pub fn handle_commands() -> Result<()> {
         MixxxCli::Playlist(args) => list_playlist_tracks(&conn, &args),
         MixxxCli::Convert(args) => convert_track_locations(&conn, &args),
         MixxxCli::CrossFade(args) => cross_fade(&conn, &args),
+        MixxxCli::Slice(args) => slice(&conn, &args),
         MixxxCli::Tag => list_mp3_tag(&conn),
     }
 }
