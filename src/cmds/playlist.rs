@@ -14,6 +14,7 @@ pub struct PlaylistArgs {
 
 #[derive(Debug)]
 pub struct TrackModel {
+    pub track_id: i32,
     pub position: i32,
     pub title: String,
     pub artist: Option<String>,
@@ -45,6 +46,7 @@ fn fetch_track(conn: &Connection, playlist_track: &PlaylistTrack) -> Result<Trac
         })
         .collect::<BTreeMap<_, _>>();
     Ok(TrackModel {
+        track_id: library.id,
         position: playlist_track.position,
         title: library.title,
         artist: library.artist,
@@ -72,10 +74,11 @@ fn fetch_playlist(conn: &Connection, id: i32) -> Result<PlaylistModel> {
 }
 
 pub fn list_playlist_tracks(conn: &Connection, args: &PlaylistArgs) -> Result<()> {
-    let playlist = fetch_playlist(conn, args.playlist_id)?;
+    let mut playlist = fetch_playlist(conn, args.playlist_id)?;
+    playlist.tracks.sort_by_key(|t| t.position);
 
     let mut table = Table::new();
-    table.set_header(vec!["bpm", "title", "artist", "cues"]);
+    table.set_header(vec!["#", "track_id", "bpm", "title", "artist", "cues"]);
     for track in playlist.tracks.iter() {
         let artists = track
             .artist
@@ -83,9 +86,11 @@ pub fn list_playlist_tracks(conn: &Connection, args: &PlaylistArgs) -> Result<()
             .unwrap_or("---".to_string())
             .to_string();
         table.add_row(vec![
+            track.position.to_string(),
+            track.track_id.to_string(),
             track.bpm.to_string(),
-            track.title.to_string(),
-            artists.chars().take(20).collect(),
+            track.title.chars().take(25).collect(),
+            artists.chars().take(15).collect(),
             track
                 .cues
                 .iter()

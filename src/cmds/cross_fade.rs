@@ -5,7 +5,6 @@ use std::{
     fmt::Display,
     path::{Path, PathBuf},
     process::Command,
-    time::Duration,
 };
 
 #[derive(Debug, clap::Parser)]
@@ -28,29 +27,31 @@ pub struct CrossFadeArgs {
 
 #[derive(Debug)]
 struct TrackClip {
+    id: i32,
     path: PathBuf,
     bpm: f32,
-    duration: Duration,
-    beat: Duration,
-    cue_at: Duration,
+    duration: f32,
+    beat: f32,
+    cue_at: f32,
 }
 
 impl TrackClip {
     pub fn new(path: &Path, library: &Library, cue: &Cue) -> Self {
-        let cue_at = Duration::from_secs_f32(cue.position / library.samplerate as f32 / 2.0);
-        let beat = Duration::from_secs_f32(60.0 / library.bpm as f32);
+        let cue_at = cue.position / library.samplerate as f32 / 2.0;
+        let beat = 60.0 / library.bpm as f32;
         Self {
+            id: library.id,
             path: path.to_path_buf(),
             bpm: library.bpm,
-            duration: Duration::from_secs_f32(library.duration),
+            duration: library.duration,
             beat,
             cue_at,
         }
     }
 
     pub fn at(&self, scale: f32, offset: i32) -> f32 {
-        let cue_at = self.cue_at.as_secs_f32() / scale;
-        let beat = self.beat.as_secs_f32() / scale;
+        let cue_at = self.cue_at / scale;
+        let beat = self.beat / scale;
         cue_at + beat * offset as f32
     }
 }
@@ -59,11 +60,12 @@ impl Display for TrackClip {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "bpm={:.0} cue={:3.2}s path={}, dur={}s",
+            "id={},bpm={:.0} cue={:3.2}s path={}, dur={}s",
+            self.id,
             self.bpm,
-            self.cue_at.as_secs(),
+            self.cue_at,
             self.path.display(),
-            self.duration.as_secs_f32(),
+            self.duration,
         )
     }
 }
@@ -80,27 +82,29 @@ fn cross_fade_cmd(
     // ffmpeg -i a.mp3 -i b.mp3 -filter_complex "[0]atrim=0:185.0[a]; [1]atrim=80.0[b]; [a][b]acrossfade=d=5.0" out.mp3
     let a_scale = b.bpm / a.bpm;
     let b_scale = 1.0;
-    let beat = b.beat.as_secs_f32() / b_scale;
-    let (a_from, a_to) = (a.at(a_scale, a_range.0), a.at(a_scale, a_range.1));
-    let (b_from, b_to) = (b.at(b_scale, b_range.0), b.at(b_scale, b_range.1));
-    println!(
-        "A: {} .. {} .. {}",
-        a_from,
-        a.cue_at.as_secs_f32() / a_scale,
-        a_to
-    );
-    println!(
-        "B: {} .. {} .. {}",
-        b_from,
-        b_from + beat * cross_fade_beats as f32,
-        b_to
-    );
+    let (mut a_from, a_to) = (a.at(a_scale, a_range.0), a.at(a_scale, a_range.1));
+    let (mut b_from, b_to) = (b.at(b_scale, b_range.0), b.at(b_scale, b_range.1));
+    let beat = b.beat / b_scale;
+    let mut cross = beat * cross_fade_beats as f32;
+
+    println!("beat={}s, cross={}b={}s", beat, cross_fade_beats, cross);
+    println!("A: {} .. {} .. {}", a_from, a.cue_at / a_scale, a_to);
+    println!("B: {} .. {} .. {}", b_from, b_from + cross, b_to);
+
+    if b_from < 0.0 {
+        a_from += b_from.abs();
+        cross -= b_from.abs();
+        b_from = 0.0;
+    }
+
     let filters = vec![
         format!("[0]atempo={}[0_1]", a_scale),
         format!("[0_1]atrim={}:{}[0_2]", a_from, a_to),
+        format!("[0_2]loudnorm[0_3]"),
         format!("[1]atrim={}:{}[1_1]", b_from, b_to),
+        format!("[1_1]loudnorm[1_2]"),
         // TODO: crossfade curve
-        format!("[0_2][1_1]acrossfade=d={}", beat * cross_fade_beats as f32),
+        format!("[0_3][1_2]acrossfade=d={}:c1=squ:c2=squ", cross),
     ];
     let filter_complex = filters.join(";");
     println!("{}", filter_complex);
@@ -119,6 +123,7 @@ fn cross_fade_cmd(
     if !output.status.success() {
         println!("{}", String::from_utf8_lossy(&output.stderr));
     }
+    println!("O: {}\n", out.display());
     Ok(())
 }
 
