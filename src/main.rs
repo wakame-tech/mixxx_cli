@@ -2,6 +2,7 @@ use anyhow::Result;
 use cmds::handle_commands;
 
 mod cmds;
+mod ffmpeg;
 mod mixxx;
 
 fn main() -> Result<()> {
