@@ -1,7 +1,8 @@
 use self::{
     converter::{convert_track_locations, ConvertArgs},
-    cross_fade::{cross_fade, slice, CrossFadeArgs, SliceArgs},
+    cross_fade::{cross_fade, CrossFadeArgs},
     playlist::{list_playlist_tracks, PlaylistArgs},
+    slice::{slice, SliceArgs},
     tag::list_mp3_tag,
 };
 use anyhow::Result;
@@ -12,7 +13,9 @@ use std::path::PathBuf;
 pub mod converter;
 pub mod cross_fade;
 pub mod playlist;
+pub mod slice;
 pub mod tag;
+pub mod utils;
 
 #[derive(Debug, clap::Parser)]
 enum MixxxCli {
