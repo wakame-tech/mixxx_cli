@@ -25,7 +25,7 @@ pub struct Cue {
     pub r#type: CueType,
     pub position: f32,
     pub length: f32,
-    pub hotcue: i32,
+    pub hotcue: u8,
 }
 
 impl<'a> AsRepo<'a> for Cue {

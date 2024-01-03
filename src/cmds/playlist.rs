@@ -1,15 +1,18 @@
+use crate::cmds::mix::export_playlist_mixes;
 use crate::mixxx::{
     cue::Cue, library::Library, playlist::Playlist, playlist_track::PlaylistTrack, repo::AsRepo,
 };
 use anyhow::Result;
 use comfy_table::Table;
 use rusqlite::Connection;
-use std::{collections::BTreeMap, time::Duration};
+use std::{collections::BTreeMap, path::PathBuf, time::Duration};
 
 #[derive(Debug, clap::Parser)]
 pub struct PlaylistArgs {
     #[arg(long)]
     playlist_id: i32,
+    #[arg(long)]
+    out: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -18,8 +21,18 @@ pub struct TrackModel {
     pub position: i32,
     pub title: String,
     pub artist: Option<String>,
-    pub bpm: u8,
+    pub bpm: f32,
     pub cues: BTreeMap<u8, Duration>,
+}
+
+impl TrackModel {
+    pub fn first_hotcue(&self) -> Option<u8> {
+        self.cues.iter().min_by_key(|(_, &d)| d).map(|(c, _)| *c)
+    }
+
+    pub fn last_hotcue(&self) -> Option<u8> {
+        self.cues.iter().max_by_key(|(_, &d)| d).map(|(c, _)| *c)
+    }
 }
 
 #[derive(Debug)]
@@ -40,7 +53,7 @@ fn fetch_track(conn: &Connection, playlist_track: &PlaylistTrack) -> Result<Trac
         .iter()
         .map(|cue| {
             (
-                cue.hotcue as u8,
+                cue.hotcue,
                 Duration::from_secs_f32(cue.position.max(0.) / library.samplerate as f32 / 2.0),
             )
         })
@@ -50,7 +63,7 @@ fn fetch_track(conn: &Connection, playlist_track: &PlaylistTrack) -> Result<Trac
         position: playlist_track.position,
         title: library.title,
         artist: library.artist,
-        bpm: library.bpm as u8,
+        bpm: library.bpm,
         cues,
     })
 }
@@ -74,8 +87,7 @@ fn fetch_playlist(conn: &Connection, id: i32) -> Result<PlaylistModel> {
 }
 
 pub fn list_playlist_tracks(conn: &Connection, args: &PlaylistArgs) -> Result<()> {
-    let mut playlist = fetch_playlist(conn, args.playlist_id)?;
-    playlist.tracks.sort_by_key(|t| t.position);
+    let playlist = fetch_playlist(conn, args.playlist_id)?;
 
     let mut table = Table::new();
     table.set_header(vec!["#", "track_id", "bpm", "title", "artist", "cues"]);
@@ -100,5 +112,9 @@ pub fn list_playlist_tracks(conn: &Connection, args: &PlaylistArgs) -> Result<()
         ]);
     }
     println!("{}", table);
+
+    if let Some(out) = &args.out {
+        export_playlist_mixes(&playlist, out)?;
+    }
     Ok(())
 }

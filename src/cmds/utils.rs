@@ -16,7 +16,7 @@ pub fn get_track(conn: &Connection, track_id: i32) -> Result<(PathBuf, Library)>
     Ok((track_location, library))
 }
 
-pub fn get_hotcue(conn: &Connection, track_id: i32, hotcue: i32) -> Result<Cue> {
+pub fn get_hotcue(conn: &Connection, track_id: i32, hotcue: u8) -> Result<Cue> {
     let cue_repo = Cue::repo(conn);
     let cues = cue_repo
         .hot_cues_by_track_id(track_id)?
@@ -30,8 +30,6 @@ pub fn get_hotcue(conn: &Connection, track_id: i32, hotcue: i32) -> Result<Cue> 
 }
 
 /// returns seconds at cue in original bpm
-pub fn cue_at(library: &Library, cue: &Cue, offset_beats: i32) -> f32 {
-    let cue_at = cue.position / library.samplerate as f32 / 2.0;
-    let beat = 60.0 / library.bpm;
-    cue_at + beat * offset_beats as f32
+pub fn cue_at(library: &Library, cue: &Cue) -> f32 {
+    cue.position / library.samplerate as f32 / 2.0
 }

@@ -9,21 +9,21 @@ use std::path::PathBuf;
 #[derive(Debug, clap::Parser)]
 pub struct SliceArgs {
     #[arg(long)]
-    id: i32,
+    pub id: i32,
     #[arg(long)]
-    from_hotcue: i32,
+    pub from_hotcue: u8,
     #[arg(long, allow_hyphen_values = true)]
-    from_offset: i32,
+    pub from_offset: i32,
     #[arg(long)]
-    to_hotcue: i32,
+    pub to_hotcue: u8,
     #[arg(long, allow_hyphen_values = true)]
-    to_offset: i32,
+    pub to_offset: i32,
     #[arg(long)]
-    bpm: Option<f32>,
+    pub bpm: Option<f32>,
     #[arg(long)]
-    to_bpm: Option<f32>,
+    pub to_bpm: Option<f32>,
     #[arg(long)]
-    out: PathBuf,
+    pub out: PathBuf,
 }
 
 pub fn slice(conn: &Connection, args: &SliceArgs) -> Result<()> {
@@ -35,19 +35,24 @@ pub fn slice(conn: &Connection, args: &SliceArgs) -> Result<()> {
         args.from_hotcue, args.from_offset, args.to_hotcue, args.to_offset
     );
 
+    let bpm = args.bpm.unwrap_or(a.bpm);
+    let beat = 60.0 / bpm;
     let a_range = (
-        cue_at(&a, &from_cue, args.from_offset),
-        cue_at(&a, &to_cue, args.to_offset),
+        cue_at(&a, &from_cue) + beat * args.from_offset as f32,
+        cue_at(&a, &to_cue) + beat * args.to_offset as f32,
     );
-    let duration = a_range.1 - a_range.0;
+    let (f, t) = (0.0, a_range.1 - a_range.0);
+    // let (f, t) = a_range;
     let a_scale = if let Some(to_bpm) = args.to_bpm {
         let from_scale = args.bpm.unwrap_or(a.bpm) / a.bpm;
         let to_scale = to_bpm / a.bpm;
-        SteppedTempoFilter::new((0.0, from_scale), (duration, to_scale), 4)
+        SteppedTempoFilter::new((f, from_scale), (t, to_scale), 4)
     } else {
         let scale = args.bpm.unwrap_or(a.bpm) / a.bpm;
-        SteppedTempoFilter::new((0.0, scale), (duration, scale), 1)
+        SteppedTempoFilter::new((f, scale), (t, scale), 1)
     };
-    slice_cmd(&a_path, &a_scale, a_range, &args.out)?;
+    println!("bpm={} target_bpm={} tempo={:?}", a.bpm, bpm, a_scale);
+    let filters = vec![a_scale.to_filters("0", "a"), vec![format!("[a] loudnorm")]].concat();
+    slice_cmd(&a_path, &filters, a_range, &args.out)?;
     Ok(())
 }

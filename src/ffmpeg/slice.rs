@@ -1,30 +1,24 @@
-use super::stepped_tempo_filter::SteppedTempoFilter;
 use anyhow::Result;
 use std::{path::Path, process::Command};
 
-pub fn slice_cmd(
-    a_path: &Path,
-    a_scale: &SteppedTempoFilter,
-    a_range: (f32, f32),
-    out: &Path,
-) -> Result<()> {
-    let mut filters = vec![
-        format!("[0]loudnorm[0_1]"),
-        format!("[0_1]atrim={}:{}[0_2]", a_range.0, a_range.1),
+pub fn slice_cmd(a_path: &Path, filters: &[String], a_range: (f32, f32), out: &Path) -> Result<()> {
+    let args = [
+        "-loglevel".to_string(),
+        "info".to_string(),
+        "-y".to_string(),
+        "-ss".to_string(),
+        a_range.0.to_string(),
+        "-to".to_string(),
+        a_range.1.to_string(),
+        "-i".to_string(),
+        a_path.display().to_string(),
+        "-filter_complex".to_string(),
+        filters.join(";"),
+        out.display().to_string(),
     ];
-    filters.extend(a_scale.to_filters(2));
-    println!("{:#?}", filters);
-    let filter_complex = filters.join(";");
-    let output = Command::new("ffmpeg")
-        .args([
-            "-y".to_string(),
-            "-i".to_string(),
-            a_path.display().to_string(),
-            "-filter_complex".to_string(),
-            filter_complex,
-            out.display().to_string(),
-        ])
-        .output()?;
+    println!("{:#?}", args);
+    let child = Command::new("ffmpeg").args(args).spawn()?;
+    let output = child.wait_with_output()?;
     if !output.status.success() {
         println!("{}", String::from_utf8_lossy(&output.stderr));
     }

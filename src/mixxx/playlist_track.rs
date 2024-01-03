@@ -19,9 +19,13 @@ impl<'a> AsRepo<'a> for PlaylistTrack {
 
 impl<'a> Repo<'a, PlaylistTrack> {
     pub fn find_by_playlist_id(&self, playlist_id: i32) -> Result<Vec<PlaylistTrack>> {
-        let mut stmt = self
-            .conn
-            .prepare(format!("SELECT * FROM {} WHERE playlist_id=?1", self.table).as_str())?;
+        let mut stmt = self.conn.prepare(
+            format!(
+                "SELECT * FROM {} WHERE playlist_id=?1 ORDER BY position ASC",
+                self.table
+            )
+            .as_str(),
+        )?;
         self.query(&mut stmt, params![playlist_id])
     }
 }

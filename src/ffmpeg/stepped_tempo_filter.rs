@@ -19,38 +19,41 @@ impl SteppedTempoFilter {
         Self { spans }
     }
 
-    pub fn to_filters(&self, index: usize) -> Vec<String> {
-        let mut i = index;
+    pub fn to_filters(&self, input: &str, output: &str) -> Vec<String> {
+        let mut i = 0;
         let mut filters = vec![];
         let mut src_labels = vec![];
         let mut dst_labels = vec![];
 
         for (begin, end, scale) in self.spans.iter() {
             filters.push(format!(
-                "[0_{}] atrim={}:{} [0_{}]",
+                "[stf_{}] atrim={}:{} [stf_{}]",
                 i + 1,
                 begin,
                 end,
                 i + 2
             ));
-            src_labels.push(format!("[0_{}]", i + 1));
-            filters.push(format!("[0_{}] atempo={} [0_{}]", i + 2, scale, i + 3));
-            dst_labels.push(format!("[0_{}]", i + 3));
+            src_labels.push(format!("[stf_{}]", i + 1));
+            filters.push(format!("[stf_{}] atempo={} [stf_{}]", i + 2, scale, i + 3));
+            dst_labels.push(format!("[stf_{}]", i + 3));
             i += 3;
         }
         filters.insert(
             0,
             format!(
-                "[0_{}] asplit={} {}",
-                index,
+                "[{}]asplit={} {}",
+                input,
                 self.spans.len(),
                 src_labels.join("")
             ),
         );
+        // TODO: Queue input is backward in time
+        // [mp3 @ 0x5647977ccb40] Application provided invalid, non monotonically increasing dts to muxer in stream 0:
         filters.push(format!(
-            "{} concat=n={}:v=0:a=1",
+            "{} concat=n={}:v=0:a=1,asetpts=PTS-STARTPTS [{}]",
             dst_labels.join(""),
-            dst_labels.len()
+            dst_labels.len(),
+            output,
         ));
         filters
     }
@@ -64,6 +67,6 @@ mod tests {
     fn test_pts_filter() {
         let filter = SteppedTempoFilter::new((0.0, 1.0), (20.0, 1.8), 4);
         dbg!(&filter);
-        dbg!(filter.to_filters(2));
+        dbg!(filter.to_filters("input", "output"));
     }
 }

@@ -9,83 +9,83 @@ use std::path::PathBuf;
 #[derive(Debug, clap::Parser)]
 pub struct CrossFadeArgs {
     #[arg(long)]
-    a_id: i32,
+    pub a_id: i32,
     #[arg(long)]
-    a_hotcue: i32,
+    pub a_hotcue: u8,
     #[arg(long)]
-    b_id: i32,
+    pub b_id: i32,
     #[arg(long)]
-    b_hotcue: i32,
+    pub b_hotcue: u8,
     #[arg(long)]
-    margin: u32,
+    pub crossfade: u32,
     #[arg(long)]
-    crossfade: u32,
+    pub bpm: Option<f32>,
     #[arg(long)]
-    bpm: Option<f32>,
-    #[arg(long)]
-    out: PathBuf,
+    pub out: PathBuf,
 }
 
 pub fn cross_fade(conn: &Connection, args: &CrossFadeArgs) -> Result<()> {
     let (a_path, a) = get_track(conn, args.a_id)?;
     let a_cue = get_hotcue(conn, args.a_id, args.a_hotcue)?;
+
     let (b_path, b) = get_track(conn, args.b_id)?;
     let b_cue = get_hotcue(conn, args.b_id, args.b_hotcue)?;
-    let a_range = (-(args.margin as i32), args.crossfade as i32);
-    let b_range = (0, args.crossfade as i32 + args.margin as i32);
-    println!(
-        "@{}+{} ..({}).. @{}+{}",
-        args.a_hotcue,
-        -(args.margin as i32),
-        args.crossfade,
-        args.b_hotcue,
-        args.margin
-    );
+
     let bpm = args.bpm.unwrap_or(b.bpm);
     let a_scale = bpm / a.bpm;
     let b_scale = bpm / b.bpm;
-    let beat = 60.0 / bpm;
-    let mut a_range = (
-        cue_at(&a, &a_cue, a_range.0) / a_scale,
-        cue_at(&a, &a_cue, a_range.1) / a_scale,
-    );
-    let mut b_range = (
-        cue_at(&b, &b_cue, b_range.0) / b_scale,
-        cue_at(&b, &b_cue, b_range.1) / b_scale,
-    );
-    let mut cross = beat * args.crossfade as f32;
 
-    println!("beat={}s, cross={}b={}s", beat, args.crossfade, cross);
+    let beat_a = 60.0 / a.bpm;
+    let beat_b = 60.0 / b.bpm;
+
+    let a_cue_at = cue_at(&a, &a_cue);
+    let b_cue_at = cue_at(&b, &b_cue);
+
+    let a_filters = vec![
+        format!(
+            "[0] atrim=start={}:duration={},asetpts=PTS-STARTPTS [0_1]",
+            a_cue_at,
+            beat_a * args.crossfade as f32,
+        ),
+        format!(
+            "[0_1] afade=t=out:st={}:duration={}:curve=tri [0_2]",
+            beat_a,
+            beat_a * args.crossfade as f32,
+        ),
+        format!("[0_2] loudnorm [0_3]"),
+    ];
+    let a_out = format!("[0_{}]", a_filters.len());
+    let b_filters = vec![
+        format!(
+            "[1] atrim=start={}:duration={},asetpts=PTS-STARTPTS [1_1]",
+            b_cue_at,
+            beat_b * (args.crossfade) as f32,
+        ),
+        format!(
+            "[1_1] afade=t=in:st={}:duration={}:curve=tri,asetpts=PTS-STARTPTS [1_2]",
+            0.0,
+            beat_b * args.crossfade as f32,
+        ),
+        format!("[1_2] loudnorm [1_3]"),
+    ];
+    let b_out = format!("[1_{}]", b_filters.len());
 
     println!(
-        "A: BPM={}->{}(scale={}) {} .. {} ({}s)",
-        a.bpm,
-        bpm,
-        a_scale,
-        a_range.0,
-        a_range.1,
-        a_range.1 - a_range.0
+        "A  : @{}\nA+B: ({}b)\nB  : @{}b",
+        args.a_hotcue, args.crossfade, args.b_hotcue,
     );
-    println!(
-        "B:BPM={}->{}(scale={}) {} .. {} ({}s)",
-        b.bpm,
-        bpm,
-        b_scale,
-        b_range.0,
-        b_range.1,
-        b_range.1 - b_range.0
-    );
+    let filters = vec![
+        a_filters,
+        b_filters,
+        vec![
+            format!("{} atempo={} [1a]", a_out, a_scale),
+            format!("{} atempo={} [1b]", b_out, b_scale),
+            format!("[1a][1b] amix [out]"),
+        ],
+    ]
+    .concat();
 
-    if b_range.0 < 0.0 {
-        a_range.0 += b_range.0.abs();
-        cross -= b_range.0.abs();
-        b_range.0 = 0.0;
-    }
-    cross_fade_cmd(
-        (&a_path, a_scale, a_range),
-        (&b_path, b_scale, b_range),
-        cross,
-        &args.out,
-    )?;
+    println!("{:#?}", filters);
+    cross_fade_cmd(&a_path, &b_path, &filters, &args.out)?;
     Ok(())
 }
