@@ -41,4 +41,16 @@ impl<'a> Repo<'a, Cue> {
         )?;
         self.query(&mut stmt, params![track_id, CueType::HotCue as u8])
     }
+
+    pub fn hot_cue_by_track_id(&self, track_id: i32, hotcue: u8) -> Result<Cue> {
+        let mut stmt = self.conn.prepare(
+            format!(
+                "SELECT * FROM {} WHERE track_id=?1 AND type=?2 AND hotcue=?3",
+                self.table
+            )
+            .as_str(),
+        )?;
+        self.query(&mut stmt, params![track_id, CueType::HotCue as u8, hotcue])
+            .and_then(|res| res.get(0).cloned().ok_or(anyhow::anyhow!("not found")))
+    }
 }

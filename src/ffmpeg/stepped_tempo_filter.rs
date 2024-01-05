@@ -27,7 +27,7 @@ impl SteppedTempoFilter {
 
         for (begin, end, scale) in self.spans.iter() {
             filters.push(format!(
-                "[stf_{}] atrim={}:{} [stf_{}]",
+                "[stf_{}] atrim={}:{},asetpts=N/SR/TB [stf_{}]",
                 i + 1,
                 begin,
                 end,
@@ -47,10 +47,8 @@ impl SteppedTempoFilter {
                 src_labels.join("")
             ),
         );
-        // TODO: Queue input is backward in time
-        // [mp3 @ 0x5647977ccb40] Application provided invalid, non monotonically increasing dts to muxer in stream 0:
         filters.push(format!(
-            "{} concat=n={}:v=0:a=1,asetpts=PTS-STARTPTS [{}]",
+            "{} concat=n={}:v=0:a=1 [{}]",
             dst_labels.join(""),
             dst_labels.len(),
             output,

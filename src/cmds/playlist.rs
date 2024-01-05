@@ -1,4 +1,4 @@
-use crate::cmds::mix::export_playlist_mixes;
+use super::mix::MixTrack;
 use crate::mixxx::{
     cue::Cue, library::Library, playlist::Playlist, playlist_track::PlaylistTrack, repo::AsRepo,
 };
@@ -26,12 +26,12 @@ pub struct TrackModel {
 }
 
 impl TrackModel {
-    pub fn first_hotcue(&self) -> Option<u8> {
-        self.cues.iter().min_by_key(|(_, &d)| d).map(|(c, _)| *c)
+    fn first_cue(&self) -> Option<u8> {
+        self.cues.iter().min_by_key(|(_, d)| *d).map(|(c, _)| *c)
     }
 
-    pub fn last_hotcue(&self) -> Option<u8> {
-        self.cues.iter().max_by_key(|(_, &d)| d).map(|(c, _)| *c)
+    fn last_cue(&self) -> Option<u8> {
+        self.cues.iter().max_by_key(|(_, d)| *d).map(|(c, _)| *c)
     }
 }
 
@@ -39,6 +39,32 @@ impl TrackModel {
 pub struct PlaylistModel {
     pub title: String,
     pub tracks: Vec<TrackModel>,
+}
+
+impl PlaylistModel {
+    fn into_mix_tracks(&self) -> Vec<MixTrack> {
+        let mut mix_tracks: Vec<MixTrack> = vec![];
+        let mut current_bpm: f32 = 0.;
+        for (i, track) in self.tracks.iter().enumerate() {
+            let mix_track = MixTrack::new(
+                track.position as usize,
+                track.track_id,
+                track.title.clone(),
+                track.first_cue().unwrap_or(0),
+                if i == 0 { 0 } else { 32 + 1 },
+                track.last_cue().unwrap_or(0),
+                if i == 0 { Some(track.bpm) } else { None },
+                None,
+                32,
+            );
+            if i != 0 && track.bpm > current_bpm {
+                mix_tracks[i - 1].to_bpm = Some(track.bpm);
+            }
+            current_bpm = current_bpm.max(track.bpm);
+            mix_tracks.push(mix_track);
+        }
+        mix_tracks
+    }
 }
 
 fn fetch_track(conn: &Connection, playlist_track: &PlaylistTrack) -> Result<TrackModel> {
@@ -114,7 +140,12 @@ pub fn list_playlist_tracks(conn: &Connection, args: &PlaylistArgs) -> Result<()
     println!("{}", table);
 
     if let Some(out) = &args.out {
-        export_playlist_mixes(&playlist, out)?;
+        let mix_tracks = playlist.into_mix_tracks();
+        let mut writer = csv::Writer::from_writer(vec![]);
+        for track in mix_tracks.iter() {
+            writer.serialize(track)?;
+        }
+        std::fs::write(out, writer.into_inner()?)?;
     }
     Ok(())
 }

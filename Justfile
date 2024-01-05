@@ -1,7 +1,7 @@
 set dotenv-load
 
 playlist id:
-  cargo run -- playlist --playlist-id {{id}} --out playlist_{{id}}.ron
+  cargo run -- playlist --playlist-id {{id}} --out mix_{{id}}.csv
 
-create_mix id:
-  cargo run -- create-mix playlist_{{id}}.ron --out {{id}}.mp3
+create_mix csv:
+  cargo run -- create-mix {{csv}} --out out.mp3
